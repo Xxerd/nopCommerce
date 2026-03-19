@@ -1,0 +1,70 @@
+# Observability stack for nopCommerce (Task 2 / Task 3)
+#
+# Services:
+#   otel-collector  — receives OTLP from the app, fans out to Jaeger + Prometheus
+#   jaeger          — distributed trace UI  (http://localhost:16686)
+#   prometheus      — metrics scrape + storage  (http://localhost:9090)
+#   grafana         — dashboards  (http://localhost:3000, admin/admin)
+#
+# Usage:
+#   docker compose -f docker-compose.observability.yml up -d
+#
+# The nopCommerce app must be started with:
+#   OpenTelemetry__OtlpEndpoint=http://localhost:4317
+
+services:
+
+  otel-collector:
+    image: otel/opentelemetry-collector-contrib:0.104.0
+    container_name: nop_otel_collector
+    command: ["--config=/etc/otel/config.yml"]
+    volumes:
+      - ./otel-collector-config.yml:/etc/otel/config.yml:ro
+    ports:
+      - "4317:4317"   # OTLP gRPC (app → collector)
+      - "4318:4318"   # OTLP HTTP  (alternative)
+      - "8889:8889"   # Prometheus scrape endpoint (collector metrics)
+    depends_on:
+      - jaeger
+      - prometheus
+
+  jaeger:
+    image: jaegertracing/all-in-one:1.58
+    container_name: nop_jaeger
+    environment:
+      COLLECTOR_OTLP_ENABLED: "true"
+    ports:
+      - "16686:16686"  # Jaeger UI
+      - "14250:14250"  # gRPC from collector
+
+  prometheus:
+    image: prom/prometheus:v2.53.0
+    container_name: nop_prometheus
+    command:
+      - --config.file=/etc/prometheus/prometheus.yml
+      - --storage.tsdb.path=/prometheus
+      - --web.enable-remote-write-receiver
+    volumes:
+      - ./prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - prometheus_data:/prometheus
+    ports:
+      - "9090:9090"
+
+  grafana:
+    image: grafana/grafana:11.1.0
+    container_name: nop_grafana
+    environment:
+      GF_SECURITY_ADMIN_PASSWORD: admin
+      GF_USERS_ALLOW_SIGN_UP: "false"
+    volumes:
+      - grafana_data:/var/lib/grafana
+      - ./grafana/provisioning:/etc/grafana/provisioning:ro
+    ports:
+      - "3000:3000"
+    depends_on:
+      - prometheus
+      - jaeger
+
+volumes:
+  prometheus_data:
+  grafana_data:

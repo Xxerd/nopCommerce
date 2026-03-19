@@ -1,4 +1,6 @@
-﻿using System.Globalization;
+﻿using System.Diagnostics;
+using System.Globalization;
+using Nop.Services.Telemetry;
 using Newtonsoft.Json;
 using Nop.Core;
 using Nop.Core.Caching;
@@ -1571,6 +1573,15 @@ public partial class OrderProcessingService : IOrderProcessingService
         if (processPaymentRequest.OrderGuid == Guid.Empty)
             throw new Exception("Order GUID is not generated");
 
+        using var activity = NopTelemetry.OrderSource.StartActivity(
+            "order.place",
+            ActivityKind.Internal);
+
+        // Non-PII attributes only — no customer email, no payment details
+        activity?.SetTag("order.guid", processPaymentRequest.OrderGuid.ToString());
+        activity?.SetTag("order.store_id", processPaymentRequest.StoreId);
+        activity?.SetTag("order.is_recurring_payment", processPaymentRequest.IsRecurringPayment);
+
         //prepare order details
         var details = await PreparePlaceOrderDetailsAsync(processPaymentRequest);
 
@@ -1613,8 +1624,17 @@ public partial class OrderProcessingService : IOrderProcessingService
                         string.Format(await _localizationService.GetResourceAsync("ActivityLog.PublicStore.PlaceOrder"),
                             order.Id), order);
 
-                    //raise event       
+                    //raise event
                     await _eventPublisher.PublishAsync(new OrderPlacedEvent(order));
+
+                    // Record observability signals — no PII, only operational data
+                    activity?.SetTag("order.id", order.Id);
+                    activity?.SetTag("order.payment_status", order.PaymentStatus.ToString());
+                    activity?.SetTag("order.shipping_required", order.ShippingStatus != Core.Domain.Shipping.ShippingStatus.ShippingNotRequired);
+                    NopTelemetry.OrdersPlaced.Add(1, new TagList { { "store_id", processPaymentRequest.StoreId } });
+                    NopTelemetry.OrderTotalAmount.Record(
+                        (double)order.OrderTotal,
+                        new TagList { { "store_id", processPaymentRequest.StoreId } });
 
                     //check order status
                     await CheckOrderStatusAsync(order);
@@ -1633,6 +1653,7 @@ public partial class OrderProcessingService : IOrderProcessingService
             }
             catch (Exception exc)
             {
+                activity?.SetStatus(ActivityStatusCode.Error, exc.Message);
                 await _logger.ErrorAsync(exc.Message, exc);
                 result.AddError(exc.Message);
             }

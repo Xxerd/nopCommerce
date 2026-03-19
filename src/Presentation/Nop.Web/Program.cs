@@ -1,7 +1,11 @@
 ﻿using Autofac.Extensions.DependencyInjection;
 using Nop.Core.Configuration;
 using Nop.Core.Infrastructure;
+using Nop.Services.Telemetry;
 using Nop.Web.Framework.Infrastructure.Extensions;
+using OpenTelemetry.Resources;
+using OpenTelemetry.Trace;
+using OpenTelemetry.Metrics;
 
 namespace Nop.Web;
 
@@ -40,6 +44,20 @@ public partial class Program
 
         //add services to the application and configure service provider
         builder.Services.ConfigureApplicationServices(builder);
+
+        //configure OpenTelemetry tracing and metrics (OTLP → OTel Collector → Jaeger / Prometheus)
+        var otlpEndpoint = builder.Configuration["OpenTelemetry:OtlpEndpoint"] ?? "http://localhost:4317";
+        builder.Services.AddOpenTelemetry()
+            .ConfigureResource(r => r.AddService(NopTelemetry.ServiceName, serviceVersion: NopTelemetry.Version))
+            .WithTracing(tracing => tracing
+                .AddSource(NopTelemetry.OrderSource.Name)
+                .AddAspNetCoreInstrumentation(opts => opts.RecordException = true)
+                .AddHttpClientInstrumentation()
+                .AddOtlpExporter(opts => opts.Endpoint = new Uri(otlpEndpoint)))
+            .WithMetrics(metrics => metrics
+                .AddMeter(NopTelemetry.OrderMeterName)
+                .AddAspNetCoreInstrumentation()
+                .AddOtlpExporter(opts => opts.Endpoint = new Uri(otlpEndpoint)));
 
         var app = builder.Build();
 
