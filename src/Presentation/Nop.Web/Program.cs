@@ -50,12 +50,13 @@ public partial class Program
         builder.Services.AddOpenTelemetry()
             .ConfigureResource(r => r.AddService(NopTelemetry.ServiceName, serviceVersion: NopTelemetry.Version))
             .WithTracing(tracing => tracing
-                .AddSource(NopTelemetry.OrderSource.Name)
+                .AddSource(NopTelemetry.CatalogSource.Name)
+                .AddSource("Npgsql")
                 .AddAspNetCoreInstrumentation(opts => opts.RecordException = true)
                 .AddHttpClientInstrumentation()
                 .AddOtlpExporter(opts => opts.Endpoint = new Uri(otlpEndpoint)))
             .WithMetrics(metrics => metrics
-                .AddMeter(NopTelemetry.OrderMeterName)
+                .AddMeter(NopTelemetry.CatalogMeterName)
                 .AddAspNetCoreInstrumentation()
                 .AddOtlpExporter(opts => opts.Endpoint = new Uri(otlpEndpoint)));
 

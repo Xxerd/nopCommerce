@@ -14,44 +14,46 @@ public static class NopTelemetry
 {
     public const string ServiceName = "nopcommerce";
     public const string Version = "1.0.0";
-    public const string OrderMeterName = ServiceName + ".orders";
+    public const string CatalogMeterName = ServiceName + ".catalog";
 
     // ── Tracing ──────────────────────────────────────────────────────────────
 
     /// <summary>
-    /// ActivitySource for the order-placement flow.
-    /// Covers: checkout validation → payment processing → order persistence.
+    /// ActivitySource for the admin product-publish flow.
+    /// Covers: admin HTTP request → product service → database → cache invalidation.
     /// </summary>
-    public static readonly ActivitySource OrderSource =
-        new(ServiceName + ".orders", Version);
+    public static readonly ActivitySource CatalogSource =
+        new(ServiceName + ".catalog", Version);
 
     // ── Metrics ──────────────────────────────────────────────────────────────
 
-    private static readonly Meter _orderMeter = new(OrderMeterName, Version);
+    private static readonly Meter _catalogMeter = new(CatalogMeterName, Version);
 
     /// <summary>
-    /// Counts orders successfully placed.
+    /// Counts products published by admins.
     ///
-    /// Operational rationale: a sudden drop below the rolling baseline at any
-    /// hour is the first signal of a broken checkout pipeline — before support
-    /// tickets arrive.  Alert threshold: &lt;50 % of p50 over a 5-minute window.
+    /// Operational rationale: a sudden drop to zero during business hours signals
+    /// a broken admin workflow (permission issue, DB error) before any user report
+    /// reaches the team.  Alert threshold: 0 publishes over a 30-minute window
+    /// during catalogue-update periods.
     /// </summary>
-    public static readonly Counter<long> OrdersPlaced =
-        _orderMeter.CreateCounter<long>(
-            "nopcommerce.orders.placed",
-            unit: "{orders}",
-            description: "Number of orders successfully placed");
+    public static readonly Counter<long> ProductsPublished =
+        _catalogMeter.CreateCounter<long>(
+            "nopcommerce.catalog.products_published",
+            unit: "{products}",
+            description: "Number of products published by admins");
 
     /// <summary>
-    /// Tracks order total amounts (store primary currency).
+    /// Counts cache keys cleared per product publish operation.
     ///
-    /// Operational rationale: an abnormal drop in the p50 bucket can reveal a
-    /// discount-rule bug or a pricing misconfiguration long before revenue
-    /// reports catch it.  Pair with a Grafana panel showing p50/p95 over time.
+    /// Operational rationale: an abnormal spike reveals that a single product
+    /// update is evicting an unexpectedly large slice of the cache, which can
+    /// cause a thundering-herd DB load spike immediately after.
+    /// Pair with a DB query-rate panel to correlate cache misses → DB pressure.
     /// </summary>
-    public static readonly Histogram<double> OrderTotalAmount =
-        _orderMeter.CreateHistogram<double>(
-            "nopcommerce.orders.total_amount",
-            unit: "{currency_units}",
-            description: "Total amount of each placed order in the store currency");
+    public static readonly Counter<long> CatalogCacheKeysCleared =
+        _catalogMeter.CreateCounter<long>(
+            "nopcommerce.catalog.cache_keys_cleared",
+            unit: "{keys}",
+            description: "Number of cache keys cleared as a result of a product publish/update");
 }

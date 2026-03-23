@@ -1,4 +1,5 @@
-﻿using System.Text;
+﻿using System.Diagnostics;
+using System.Text;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.Extensions.Primitives;
 using Nop.Core;
@@ -44,6 +45,7 @@ using Nop.Web.Framework.Models.Translation;
 using Nop.Web.Framework.Mvc;
 using Nop.Web.Framework.Mvc.Filters;
 using Nop.Web.Framework.Mvc.ModelBinding;
+using Nop.Services.Telemetry;
 using Nop.Web.Framework.Validators;
 
 namespace Nop.Web.Areas.Admin.Controllers;
@@ -1078,7 +1080,16 @@ public partial class ProductController : BaseAdminController
             var product = model.ToEntity<Product>();
             product.CreatedOnUtc = DateTime.UtcNow;
             product.UpdatedOnUtc = DateTime.UtcNow;
+
+            using var activity = NopTelemetry.CatalogSource.StartActivity("catalog.product.create");
+            activity?.SetTag("product.name", product.Name);
+            activity?.SetTag("product.type", product.ProductType.ToString());
+            activity?.SetTag("product.published", product.Published);
+
             await _productService.InsertProductAsync(product);
+
+            if (product.Published)
+                NopTelemetry.ProductsPublished.Add(1, new TagList { { "action", "create" } });
 
             //search engine name
             model.SeName = await _urlRecordService.ValidateSeNameAsync(product, model.SeName, product.Name, true);
@@ -1218,9 +1229,15 @@ public partial class ProductController : BaseAdminController
             var previousRequiredProductIds = product.RequiredProductIds;
 
             //product
+            var wasPublished = product.Published;
             product = model.ToEntity(product);
 
             product.UpdatedOnUtc = DateTime.UtcNow;
+
+            using var activity = NopTelemetry.CatalogSource.StartActivity("catalog.product.update");
+            activity?.SetTag("product.id", product.Id);
+            activity?.SetTag("product.name", product.Name);
+            activity?.SetTag("product.published", product.Published);
 
             var requireOtherProductsError = string.Empty;
 
@@ -1241,6 +1258,10 @@ public partial class ProductController : BaseAdminController
                 product.RequiredProductIds = previousRequiredProductIds;
 
             await _productService.UpdateProductAsync(product);
+
+            // track newly published products (not already-published saves)
+            if (product.Published && !wasPublished)
+                NopTelemetry.ProductsPublished.Add(1, new TagList { { "action", "publish" } });
 
             //remove associated products
             if (previousProductType == ProductType.GroupedProduct && product.ProductType == ProductType.SimpleProduct)
