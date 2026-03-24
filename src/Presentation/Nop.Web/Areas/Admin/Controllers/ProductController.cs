@@ -1066,6 +1066,9 @@ public partial class ProductController : BaseAdminController
             return RedirectToAction("List");
         }
 
+        if (!ModelState.IsValid)
+            NopTelemetry.ProductValidationFailures.Add(1, new TagList { { "action", "create" } });
+
         if (ModelState.IsValid)
         {
             //a vendor should have access only to his products
@@ -1083,13 +1086,32 @@ public partial class ProductController : BaseAdminController
 
             using var activity = NopTelemetry.CatalogSource.StartActivity("catalog.product.create");
             activity?.SetTag("product.name", product.Name);
+
             activity?.SetTag("product.type", product.ProductType.ToString());
             activity?.SetTag("product.published", product.Published);
 
-            await _productService.InsertProductAsync(product);
+            var admin = await _workContext.GetCurrentCustomerAsync();
+            activity?.SetTag("admin.id", admin.Id);
 
-            if (product.Published)
-                NopTelemetry.ProductsPublished.Add(1, new TagList { { "action", "create" } });
+            var sw = Stopwatch.StartNew();
+            try
+            {
+                await _productService.InsertProductAsync(product);
+            }
+            catch (Exception ex)
+            {
+                activity?.SetStatus(ActivityStatusCode.Error, ex.Message);
+                throw;
+            }
+            finally
+            {
+                sw.Stop();
+                NopTelemetry.ProductSaveDuration.Record(sw.Elapsed.TotalMilliseconds,
+                    new TagList { { "action", "create" }, { "product.type", product.ProductType.ToString() } });
+            }
+
+            // ID is assigned by the DB after insert — set it now so the span
+            activity?.SetTag("product.id", product.Id);
 
             //search engine name
             model.SeName = await _urlRecordService.ValidateSeNameAsync(product, model.SeName, product.Name, true);
@@ -1234,20 +1256,28 @@ public partial class ProductController : BaseAdminController
 
             product.UpdatedOnUtc = DateTime.UtcNow;
 
+            if (!ModelState.IsValid)
+                NopTelemetry.ProductValidationFailures.Add(1, new TagList { { "action", "update" } });
+
             using var activity = NopTelemetry.CatalogSource.StartActivity("catalog.product.update");
             activity?.SetTag("product.id", product.Id);
+            
             activity?.SetTag("product.name", product.Name);
+            activity?.SetTag("product.type", product.ProductType.ToString());
             activity?.SetTag("product.published", product.Published);
+
+            var admin = await _workContext.GetCurrentCustomerAsync();
+            activity?.SetTag("admin.id", admin.Id);
 
             var requireOtherProductsError = string.Empty;
 
             if (product.RequireOtherProducts && !string.IsNullOrEmpty(product.RequiredProductIds))
             {
                 var requiredProductIds = _productService.ParseRequiredProductIds(product);
-                
+
                 foreach (var requiredProduct in await _productService.GetProductsByIdsAsync(requiredProductIds.ToArray()))
                 {
-                    if (product.Id == requiredProduct.Id || await isCyclicallyRequired(requiredProduct)) 
+                    if (product.Id == requiredProduct.Id || await isCyclicallyRequired(requiredProduct))
                         requireOtherProductsError = await _localizationService.GetResourceAsync("Admin.Catalog.Products.RelatedProducts.CyclicallyRelated");
 
                     break;
@@ -1257,11 +1287,22 @@ public partial class ProductController : BaseAdminController
             if (!string.IsNullOrEmpty(requireOtherProductsError))
                 product.RequiredProductIds = previousRequiredProductIds;
 
-            await _productService.UpdateProductAsync(product);
-
-            // track newly published products (not already-published saves)
-            if (product.Published && !wasPublished)
-                NopTelemetry.ProductsPublished.Add(1, new TagList { { "action", "publish" } });
+            var swUpdate = Stopwatch.StartNew();
+            try
+            {
+                await _productService.UpdateProductAsync(product);
+            }
+            catch (Exception ex)
+            {
+                activity?.SetStatus(ActivityStatusCode.Error, ex.Message);
+                throw;
+            }
+            finally
+            {
+                swUpdate.Stop();
+                NopTelemetry.ProductSaveDuration.Record(swUpdate.Elapsed.TotalMilliseconds,
+                    new TagList { { "action", "update" }, { "product.type", product.ProductType.ToString() } });
+            }
 
             //remove associated products
             if (previousProductType == ProductType.GroupedProduct && product.ProductType == ProductType.SimpleProduct)

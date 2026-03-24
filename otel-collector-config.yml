@@ -14,28 +14,38 @@ processors:
     timeout: 1s
     send_batch_size: 1024
 
-  # Drop any span/metric attribute that could carry PII.
-  # nopCommerce services must already avoid recording PII, but this acts as
-  # a defence-in-depth layer consistent with the assignment's sensitive-data
-  # exclusion requirement.
+
   attributes/redact_pii:
     actions:
-      - key: customer.email
+      - key: admin.email
         action: delete
-      - key: http.request.header.cookie
+      - key: admin.username
         action: delete
-      - key: db.statement
-        action: hash   # keep query shape for debugging, redact values
+      - key: admin.first_name
+        action: delete
+      - key: admin.last_name
+        action: delete
+      - key: admin.phone
+        action: delete
+      - key: admin.ip_address
+        action: delete
+
+      
+      - key: db.connection_string
+        action: hash   
+      - key: db.user
+        action: hash   
+      - key: net.peer.ip
+        action: hash  
 
 exporters:
   otlp/jaeger:
-    endpoint: jaeger:14250
+    endpoint: jaeger:4317
     tls:
       insecure: true
 
   prometheus:
     endpoint: "0.0.0.0:8889"
-    namespace: nopcommerce
 
   debug:
     verbosity: basic

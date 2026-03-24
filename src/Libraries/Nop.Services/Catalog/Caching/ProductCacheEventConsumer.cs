@@ -1,4 +1,4 @@
-﻿using System.Diagnostics;
+using System.Diagnostics;
 using Nop.Core.Caching;
 using Nop.Core.Domain.Catalog;
 using Nop.Core.Domain.Orders;
@@ -25,6 +25,7 @@ public partial class ProductCacheEventConsumer : CacheEventConsumer<Product>
         activity?.SetTag("product.id", entity.Id);
         activity?.SetTag("event_type", entityEventType.ToString());
 
+        var sw = Stopwatch.StartNew();
         var cleared = 0;
 
         await RemoveByPrefixAsync(NopCatalogDefaults.ProductManufacturersByProductPrefix, entity); cleared++;
@@ -46,8 +47,11 @@ public partial class ProductCacheEventConsumer : CacheEventConsumer<Product>
         cleared += entityEventType == EntityEventType.Insert ? 2 : 3;
         await base.ClearCacheAsync(entity, entityEventType);
 
+        sw.Stop();
+
         activity?.SetTag("cache.keys_cleared", cleared);
-        NopTelemetry.CatalogCacheKeysCleared.Add(cleared,
+
+        NopTelemetry.CacheClearDuration.Record(sw.Elapsed.TotalMilliseconds,
             new TagList { { "event_type", entityEventType.ToString() } });
     }
 }

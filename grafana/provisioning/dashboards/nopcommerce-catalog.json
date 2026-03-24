@@ -1,0 +1,214 @@
+{
+  "title": "nopCommerce — Admin Product Publish Flow",
+  "uid": "nopcommerce-catalog",
+  "description": "Story: Admin publishes a product. Did it reach the server? Did the DB accept it? Did the cache survive? If not — which trace shows why?",
+  "tags": ["nopcommerce", "catalog", "admin"],
+  "schemaVersion": 39,
+  "version": 1,
+  "refresh": "10s",
+  "time": { "from": "now-30m", "to": "now" },
+  "timezone": "browser",
+  "graphTooltip": 1,
+  "panels": [
+
+    { "id": 10, "type": "row", "title": "Is it happening & is it healthy?", "gridPos": { "x": 0, "y": 0, "w": 24, "h": 1 }, "collapsed": false },
+
+    {
+      "id": 1,
+      "type": "timeseries",
+      "title": "Publish Rate · Validation Failures · HTTP Error Rate",
+      "description": "Three signals on one chart. Publish Rate (green) shows admin activity. Validation Failures (orange) are silent HTTP-200 rejections — invisible to any external monitor. HTTP Error Rate (red, right axis) shows server-side 4xx/5xx. The key moment: when orange rises and red stays flat, the form is broken but no alarm fires. That gap is why this metric exists.",
+      "gridPos": { "x": 0, "y": 1, "w": 18, "h": 8 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": { "type": "prometheus", "uid": "prometheus" },
+          "expr": "sum(rate(nopcommerce_catalog_product_save_duration_milliseconds_count[2m]))",
+          "legendFormat": "Publish Rate (ops/s)"
+        },
+        {
+          "refId": "B",
+          "datasource": { "type": "prometheus", "uid": "prometheus" },
+          "expr": "sum(rate(nopcommerce_catalog_product_validation_failures_total[2m]))",
+          "legendFormat": "Validation Failures (per s)"
+        },
+        {
+          "refId": "C",
+          "datasource": { "type": "prometheus", "uid": "prometheus" },
+          "expr": "(sum(rate(http_server_request_duration_seconds_count{http_route=\"{area:exists}/{controller=Home}/{action=Index}/{id?}\", http_response_status_code=~\"[45]..\"}[2m])) or vector(0)) / sum(rate(http_server_request_duration_seconds_count{http_route=\"{area:exists}/{controller=Home}/{action=Index}/{id?}\"}[2m]))",
+          "legendFormat": "HTTP Error Rate"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "ops",
+          "custom": { "lineWidth": 2, "fillOpacity": 8, "showPoints": "auto" }
+        },
+        "overrides": [
+          {
+            "matcher": { "id": "byName", "options": "Publish Rate (ops/s)" },
+            "properties": [
+              { "id": "color", "value": { "fixedColor": "green", "mode": "fixed" } }
+            ]
+          },
+          {
+            "matcher": { "id": "byName", "options": "Validation Failures (per s)" },
+            "properties": [
+              { "id": "color", "value": { "fixedColor": "orange", "mode": "fixed" } },
+              { "id": "custom.fillOpacity", "value": 20 }
+            ]
+          },
+          {
+            "matcher": { "id": "byName", "options": "HTTP Error Rate" },
+            "properties": [
+              { "id": "unit", "value": "percentunit" },
+              { "id": "custom.axisPlacement", "value": "right" },
+              { "id": "color", "value": { "fixedColor": "red", "mode": "fixed" } },
+              { "id": "custom.fillOpacity", "value": 5 }
+            ]
+          }
+        ]
+      },
+      "options": {
+        "tooltip": { "mode": "multi", "sort": "desc" },
+        "legend": { "displayMode": "list", "placement": "bottom" }
+      }
+    },
+
+    {
+      "id": 4,
+      "type": "stat",
+      "title": "HTTP P95 Latency",
+      "description": "95th percentile end-to-end HTTP latency for the admin area. Use alongside DB and cache panels to pinpoint where time is spent.",
+      "gridPos": { "x": 18, "y": 1, "w": 6, "h": 8 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "targets": [{
+        "refId": "A",
+        "datasource": { "type": "prometheus", "uid": "prometheus" },
+        "expr": "histogram_quantile(0.95, sum(rate(http_server_request_duration_seconds_bucket{http_route=\"{area:exists}/{controller=Home}/{action=Index}/{id?}\"}[2m])) by (le))",
+        "legendFormat": "p95"
+      }],
+      "options": {
+        "reduceOptions": { "calcs": ["lastNotNull"], "fields": "", "values": false },
+        "colorMode": "background", "graphMode": "area", "textMode": "auto"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "s",
+          "thresholds": { "mode": "absolute", "steps": [
+            { "color": "green", "value": null },
+            { "color": "yellow", "value": 0.5 },
+            { "color": "red", "value": 2 }
+          ]}
+        }
+      }
+    },
+
+    { "id": 20, "type": "row", "title": "Where is the time going? (DB vs Cache)", "description": "If HTTP p95 spikes: check DB first, then Cache. These panels isolate each layer.", "gridPos": { "x": 0, "y": 9, "w": 24, "h": 1 }, "collapsed": false },
+
+    {
+      "id": 5,
+      "type": "timeseries",
+      "title": "DB Save Duration — p50 / p95 / p99",
+      "description": "Time spent inside ProductService.InsertProductAsync / UpdateProductAsync (DB write only). If this matches HTTP p95 → database is the bottleneck. If this is flat while HTTP spikes → look at cache or middleware.",
+      "gridPos": { "x": 0, "y": 10, "w": 12, "h": 8 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "targets": [
+        {
+          "refId": "p50",
+          "datasource": { "type": "prometheus", "uid": "prometheus" },
+          "expr": "histogram_quantile(0.50, sum by (le, action) (rate(nopcommerce_catalog_product_save_duration_milliseconds_bucket[5m])))",
+          "legendFormat": "p50 {{action}}"
+        },
+        {
+          "refId": "p95",
+          "datasource": { "type": "prometheus", "uid": "prometheus" },
+          "expr": "histogram_quantile(0.95, sum by (le, action) (rate(nopcommerce_catalog_product_save_duration_milliseconds_bucket[5m])))",
+          "legendFormat": "p95 {{action}}"
+        },
+        {
+          "refId": "p99",
+          "datasource": { "type": "prometheus", "uid": "prometheus" },
+          "expr": "histogram_quantile(0.99, sum by (le, action) (rate(nopcommerce_catalog_product_save_duration_milliseconds_bucket[5m])))",
+          "legendFormat": "p99 {{action}}"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "ms",
+          "custom": { "lineWidth": 2, "fillOpacity": 5, "showPoints": "auto" }
+        }
+      },
+      "options": {
+        "tooltip": { "mode": "multi", "sort": "desc" },
+        "legend": { "displayMode": "list", "placement": "bottom" }
+      }
+    },
+
+    {
+      "id": 6,
+      "type": "timeseries",
+      "title": "Cache Clear Duration — p50 / p95 / p99",
+      "description": "Time spent in ProductCacheEventConsumer.ClearCacheAsync after each product save. A spike here (with flat DB duration) means cache pressure — the next storefront requests all miss cache and hit the DB together (thundering herd).",
+      "gridPos": { "x": 12, "y": 10, "w": 12, "h": 8 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "targets": [
+        {
+          "refId": "p50",
+          "datasource": { "type": "prometheus", "uid": "prometheus" },
+          "expr": "histogram_quantile(0.50, sum by (le, event_type) (rate(nopcommerce_catalog_cache_clear_duration_milliseconds_bucket[5m])))",
+          "legendFormat": "p50 {{event_type}}"
+        },
+        {
+          "refId": "p95",
+          "datasource": { "type": "prometheus", "uid": "prometheus" },
+          "expr": "histogram_quantile(0.95, sum by (le, event_type) (rate(nopcommerce_catalog_cache_clear_duration_milliseconds_bucket[5m])))",
+          "legendFormat": "p95 {{event_type}}"
+        },
+        {
+          "refId": "p99",
+          "datasource": { "type": "prometheus", "uid": "prometheus" },
+          "expr": "histogram_quantile(0.99, sum by (le, event_type) (rate(nopcommerce_catalog_cache_clear_duration_milliseconds_bucket[5m])))",
+          "legendFormat": "p99 {{event_type}}"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "ms",
+          "custom": { "lineWidth": 2, "fillOpacity": 5, "showPoints": "auto" }
+        }
+      },
+      "options": {
+        "tooltip": { "mode": "multi", "sort": "desc" },
+        "legend": { "displayMode": "list", "placement": "bottom" }
+      }
+    },
+
+    { "id": 30, "type": "row", "title": "Something went wrong — find the trace", "gridPos": { "x": 0, "y": 18, "w": 24, "h": 1 }, "collapsed": false },
+
+    {
+      "id": 7,
+      "type": "table",
+      "title": "Recent Product Publish Traces",
+      "description": "Traces for catalog.product.create. Each row is one product publish — click to open the full waterfall: HTTP → ProductService → Npgsql queries → cache clear. Tags include product.name, product.id, and product.type.",
+      "gridPos": { "x": 0, "y": 19, "w": 24, "h": 10 },
+      "datasource": { "type": "jaeger", "uid": "jaeger" },
+      "fieldConfig": {
+        "defaults": { "custom": { "displayMode": "auto" } },
+        "overrides": []
+      },
+      "options": { "footer": { "show": false } },
+      "targets": [
+        {
+          "refId": "A",
+          "queryType": "search",
+          "service": "nopcommerce",
+          "operation": "catalog.product.create",
+          "limit": 20
+        }
+      ]
+    }
+
+  ]
+}
