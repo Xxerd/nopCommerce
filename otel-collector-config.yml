@@ -32,7 +32,9 @@ processors:
 
       
       - key: db.connection_string
-        action: hash   
+        action: hash
+      - key: db.statement
+        action: hash     
       - key: db.user
         action: hash   
       - key: net.peer.ip
